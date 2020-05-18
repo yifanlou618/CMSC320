@@ -1,0 +1,196 @@
+---
+title: "CMSC320 Final Project"
+author: "Yifan Lou"
+date: "5/14/2020"
+output: html_document
+---
+
+## Introduction
+This project will be talking about Airbnb. It is a platform for individuals to either rent out their houses/rooms or browse rooms for their trip to certain places. Generally rooms are cheaper than normal hotel and some of the rooms are even decorated with local features. As in this particular project, I will be analysing listing data in Los Angeles. Los Angeles is considered an extremely popular and famous tourist destination, understanding Airbnb pricing can help tourists find a cheap, while convenient place to stay. Back then Airbnb was not that well known by local hosts, it's getting more and more popular over years. Meanwhile I am also an Airbnb host, hence this data can provide me information with Airbnb listings strategy and adjust the price accordingly. The data is gained from this [website](http://insideairbnb.com/get-the-data.html). I used the data from last year December, since many things happened this year and the data this year may be very bias since many people chose to stay at home rather than traveling around. This data also serves a more meaningful purpose. As a provider of housing, Airbnb affects the housing situation in the city. This data was meant to give insight into how listings affects the housing market in Los Angeles [source](http://insideairbnb.com/about.html). 
+
+## Interact With Dataset
+By viewing this [interaction website](http://insideairbnb.com/los-angeles/) of dataset of Los Angeles, it provide a good overview of this dataset. 
+
+## Questions To Be Solved
+1. What is the relationship between availability and price?
+2. Does the district/county factor play a role in the availability and price?
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Library}
+library(tidyverse)
+library(dplyr)
+library(readr)
+library(broom)
+library(ggplot2)
+library(scales)
+library(DBI)
+```
+
+When importing the data, there are many columns can be ignored because it is not helpful with my analysis such as "host_id", "host_name", etc. I tend to ignord those columns when parsing using col_skip() function. 
+```{r Load Data}
+Airbnb_Data <- read_csv("listings.csv",
+                        col_types = cols(name = col_skip(),
+                                         host_id = col_skip(),
+                                         host_name = col_skip(),
+                                         number_of_reviews = col_skip(),
+                                         last_review = col_skip(),
+                                         calculated_host_listings_count = col_skip()
+                                         ))
+```
+
+## Write Out Columns Name
+This part is used to show name of all columns of the dataset. 
+```{r Columns Name}
+Airbnb_Data %>%
+  colnames()
+```
+
+Recall the problem 1, "What is the relationship between availability and price?". I will make a new data frame which only use columns that we need to answer this question.
+Log Angeles have three regions: City of Los Angeles, Other Cities, Unincorporated Areas. The arrtibute named "neighbourhood_group is corresponding to regions, I will rename it to "region". 
+Column named availiabilty_365 is the availability measurement, this gives the days the listing is available out of 365 days. This will be renames as "availability". 
+The measurement of cost is named "price", it is the price of renting certain listings for each night, discount of long term renting is not calculated. 
+```{r }
+dataset_one <- Airbnb_Data %>%
+  select(id, region = neighbourhood_group, price, availability = availability_365)
+head(dataset_one)
+```
+
+This dataset need to be cleaned with region should be a factor or categorical attribute.
+```{r Clean Data}
+dataset_one$region <- factor(dataset_one$region, levels = c("City of Los Angeles", "Other Cities", "Unincorporated Areas"))
+
+head(dataset_one)
+```
+
+## Exploratory Data Analysis
+## Availability Plot
+Plot the distribution of availability.
+```{r Availability Plot}
+dataset_one %>%
+  ggplot(aes(x = availability)) + 
+  geom_histogram()
+```
+The graph shows that the majority of listings have low availability. It make sence since LA is very popular for many travelers. 
+I am unable to do a log transformation since most availavility it 0, and log(0) is undefined. It is not applicable to solve the skewness. 
+
+## Price Plot
+Plot the distribution of price.
+```{r Price Plot}
+dataset_one %>%
+  ggplot(aes(x = price)) +
+  geom_histogram()
+```
+In this case a log transformation can be used to solve the left skewness since price would not be zero. 
+```{r Log Transform}
+skew_solver <- function(df, attribute) {
+  attribute <- enquo(attribute)
+  df %>%
+    summarize(median_attribute = median(!!attribute, na.rm = TRUE),
+              quarter_one = quantile(!!attribute, 1/4, na.rm = TRUE),
+              quarter_three = quantile(!!attribute, 3/4, na.rm = TRUE)) %>%
+    mutate(skew_solver = (median_attribute - quarter_one) - (quarter_three - median_attribute))
+}
+```
+Solve the skewness of price.
+```{r Price Skewness}
+dataset_one %>%
+  skew_solver(price)
+```
+Plot the price after transformation.
+```{r New Price Plot}
+dataset_one <- dataset_one %>%
+  mutate(price_after_log = log2(price))
+dataset_one %>%
+  ggplot(aes(x = price_after_log)) + 
+  geom_histogram()
+```
+Double check to see if the skewness if solved.
+```{r Check Skewness}
+dataset_one %>%
+  skew_solver(price_after_log)
+```
+The skewness is solved since the return value is significantly reduced. 
+
+## Find The Relationship
+Make a scatterplot between price_after_log and availability to see if there exist a relationship between these two. 
+```{r Scatter Plot One}
+dataset_one %>%
+  sample_frac(.1) %>%
+  ggplot(aes(x = availability, y = price_after_log)) +
+  geom_point() +
+  labs(title = "Price vs. Availability", 
+       x = "Availability",
+       y = "Price(Transformed")
+```
+Make a sactterplot for certain district/county.
+```{r Scatter Plot Two}
+dataset_one %>%
+  ggplot(aes(x = availability, y = price_after_log)) +
+  geom_point() +
+  facet_wrap(~region) + 
+  labs(title = "Price vs. Availability On Different Region", 
+       x = "Availability",
+       y = "Price(Transformed")
+```
+City of Los Angeles plot seems to have a linear relationship between price and availability. Make a scatterplot for City of Los Angeles only. 
+```{r Scatter Plot Three}
+dataset_one %>%
+  filter(region == "City of Los Angeles") %>%
+  ggplot(aes(x = availability, y = price_after_log)) +
+  geom_point() +
+  geom_smooth(method = lm) + 
+  labs(title = "Price vs. Availability On City of Log Angeles", 
+       x = "Availability",
+       y = "Price(Transformed")
+```
+From the plot, there exist a very low slope but it doesn't mean that the relationship is not significant. This can be determined from further analysis. 
+
+## Analysis On City of Los Angeles
+Since we already know that there exist a relationship between price and availability for the region "City of Los Angeles", we will use linear regression to determine two things:
+1. How significant the relationship is?
+2. What statements can be made based on dependence of price onto availability?
+
+## Linear Regression
+We will do a linear regression model with availability as predictor. In reality there are likely to have other factors that can impact price, but we will focus on availability in this analysis. 
+```{r Linear Regression Model}
+city_of_LA <- dataset_one %>%
+  filter(region == "City of Los Angeles")
+LA_fit <- lm(price ~ availability, data = city_of_LA)
+LA_tidy <- LA_fit %>%
+  tidy()
+LA_tidy
+```
+
+## Hypothesis Test
+State the null and alternative hypothesis
+Null Hypothesis: There doesn't exist a significant relationship between price and availability.
+Alternative Hypothesis: There does exist a significant relationship between price and availability.
+Test at alpha = 0.05. 
+From the table above, the p-value calculated is significantly smaller than alpha, therefore we reject the null hypothesis. 
+
+## About The Model
+Assume all assumption of linear regression are met for this model, the intercept is about 162 and the slope is about 0.43, that is, on average, for each additional available night, the price will be increased by $0.43 per night. 
+
+## Residuals vs. Fitted Value Plot
+make a plot of residuals vs fitted value to see if the linear relationship is a good estimation or not. 
+```{r Residuals vs. Fitted Value}
+augmented_LA <- LA_fit %>%
+  augment()
+augmented_LA %>%
+  ggplot(aes(x = .fitted, y = .resid)) + 
+  geom_point() +
+  geom_smooth() +
+  labs(title = "Residuals vs. Fitted Values", 
+       x = "Fitted Values",
+       y = "Residuals")
+```
+Nearly all the residuals value are zero. Some residuals are very high, those outliers are acceptable as they are very few compare to this big dataset. This linear model seems to be a good model. 
+
+## Conclusion
+We downloaded data from Airbnb website, containing December, 2019 listing data of Los Angeles, US. Based on some starting analysis and examination, making plots and fix skewness, we found that there should exist a relationship between two factors that we care about, price and availability. City of Los Angeles is the region we performs analysis on because it appears to have the best relationship estimation based on plots. From the analysis, we can determine that there is indeed a significant relationship between price and availability. We finally made statement about the effect and dependence of availability on price by the regression model equation. 
+
+To be specific on the City of Los Angeles, in general, listings that are lower in price tend to be booked by more people, while listings that are higher in price tend to be less popular. After made some reserach, I found that Airbnb listings price tend to be cheaper than hotel price in general, and because of the price different, more and more people have reasons to book Airbnb listings rather than hotel. 
+
+Again, avaliability is not the only factor that affect listings price, many other factors such as location, host review rating, neighbourhood rating, room type can also be reasons why people book certain listings rather than others. Future work of those factors comparing to price can be done. 
